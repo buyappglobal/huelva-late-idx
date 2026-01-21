@@ -1,0 +1,7 @@
+{
+  "name": "Huelva Late: Naturaleza y Patrimonio",
+  "description": "Descubre las rutas de senderismo, playas, patrimonio y monumentos naturales de la provincia de Huelva.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
