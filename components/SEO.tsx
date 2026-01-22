@@ -1,6 +1,5 @@
 
 import React from 'react';
-import { Helmet } from 'react-helmet-async';
 
 interface SEOProps {
   title: string;
@@ -10,8 +9,8 @@ interface SEOProps {
   type?: string;
 }
 
-const SEO: React.FC<SEOProps> = ({ 
-  title, 
+const SEO: React.FC<SEOProps> = ({
+  title,
   description = "Descubre las rutas de senderismo, playas, patrimonio y monumentos naturales de la provincia de Huelva.",
   image = "https://solonet.es/wp-content/uploads/2025/11/Diseno-sin-titulo-26.png",
   url = window.location.href,
@@ -24,7 +23,7 @@ const SEO: React.FC<SEOProps> = ({
   const fullImage = image.startsWith('http') ? image : `${window.location.origin}${image}`;
 
   return (
-    <Helmet>
+    <>
       {/* Standard Metadata */}
       <title>{fullTitle}</title>
       <meta name="description" content={description} />
@@ -44,7 +43,7 @@ const SEO: React.FC<SEOProps> = ({
       <meta name="twitter:title" content={fullTitle} />
       <meta name="twitter:description" content={description} />
       <meta name="twitter:image" content={fullImage} />
-    </Helmet>
+    </>
   );
 };
 
