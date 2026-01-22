@@ -35,6 +35,11 @@ export interface Place {
   hiking?: HikingDetails; // Specifically for hiking trails
   date?: string; // Specifically for events
   rating?: number;
+  coordinates?: { // Nueva propiedad para el mapa
+    lat: number;
+    lng: number;
+  };
+  distance?: number; // Calculated distance from user in km
 }
 
 export interface Category {

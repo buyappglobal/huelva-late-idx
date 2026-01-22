@@ -1,24 +1,44 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Menu, X, Map, Search, Heart, Cookie, ShieldCheck, FileText, Sparkles, Loader2, ArrowRight, Lock, Unlock, LogIn, User, Key, Download, Trash2, Copy, CheckCircle, PlusCircle, Save, ChevronRight, Calendar, Send, MessageSquare } from 'lucide-react';
+import { Menu, X, Map, Search, Heart, Cookie, ShieldCheck, FileText, Sparkles, Loader2, ArrowRight, Lock, Unlock, LogIn, User, Key, Download, Trash2, Copy, CheckCircle, PlusCircle, Save, ChevronRight, Calendar, Send, MessageSquare, MapPin } from 'lucide-react';
 import BottomNav from './BottomNav';
 import { searchPlacesWithAI, chatWithTravelAssistant, ChatMessage } from '../services/geminiService';
-import { MOCK_PLACES, CATEGORIES } from '../constants';
+import { MOCK_PLACES, CATEGORIES, BLOG_POSTS } from '../constants';
 import PlaceCard from './PlaceCard';
-import { Place, CategoryId } from '../types';
+import BlogCard from './BlogCard';
+import { Place, CategoryId, BlogPost } from '../types';
 import { useAdmin } from './AdminContext';
 
 interface LayoutProps {
   children: React.ReactNode;
   onNavigate: (view: string) => void;
+  onOpenPost?: (post: BlogPost) => void;
   currentView: string;
 }
 
 type ModalType = 'none' | 'guide' | 'faq' | 'menu' | 'cookies' | 'filter' | 'login' | 'admin_panel' | 'admin_add_place';
 
-const SUGGESTED_TAGS = ['Naturaleza', 'Romántico', 'Con niños', 'Historia', 'Playa', 'Aventura', 'Gastronomía', 'Relax'];
+const SUGGESTED_TAGS = ['Cerca de mí', 'Naturaleza', 'Romántico', 'Con niños', 'Historia', 'Playa', 'Aventura', 'Gastronomía'];
 
-const Layout: React.FC<LayoutProps> = ({ children, onNavigate, currentView }) => {
+// --- GEOLOCATION HELPERS ---
+const deg2rad = (deg: number) => {
+  return deg * (Math.PI / 180);
+};
+
+const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+  const R = 6371; // Radius of the earth in km
+  const dLat = deg2rad(lat2 - lat1);
+  const dLon = deg2rad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const d = R * c; // Distance in km
+  return d;
+};
+
+const Layout: React.FC<LayoutProps> = ({ children, onNavigate, onOpenPost, currentView }) => {
   const { isAdminMode, login, logout, overrides, addedPlaces, addNewPlace, generateReport, clearAllChanges } = useAdmin();
   const [isMenuOpen, setIsMenuOpen] = useState(false); // Top nav menu
   const [isScrolled, setIsScrolled] = useState(false); // Vertical position check
@@ -30,9 +50,11 @@ const Layout: React.FC<LayoutProps> = ({ children, onNavigate, currentView }) =>
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<Place[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchStatus, setSearchStatus] = useState<string>(''); // For location status updates
 
   // Favorites (Guide) State
   const [favoritePlaces, setFavoritePlaces] = useState<Place[]>([]);
+  const [favoritePosts, setFavoritePosts] = useState<BlogPost[]>([]);
 
   // AI Chat (Help) State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -114,9 +136,16 @@ const Layout: React.FC<LayoutProps> = ({ children, onNavigate, currentView }) =>
     if (activeModal === 'guide') {
       try {
         const favIds = JSON.parse(localStorage.getItem('huelvalate_favorites') || '[]');
+        
+        // Filter Places
         const allPlaces = [...addedPlaces, ...MOCK_PLACES];
-        const favs = allPlaces.filter(p => favIds.includes(p.id));
-        setFavoritePlaces(favs);
+        const favPlaces = allPlaces.filter(p => favIds.includes(p.id));
+        setFavoritePlaces(favPlaces);
+
+        // Filter Blog Posts
+        const favPosts = BLOG_POSTS.filter(p => favIds.includes(p.id));
+        setFavoritePosts(favPosts);
+
       } catch (e) {
         console.warn("Error loading favorites", e);
       }
@@ -149,6 +178,7 @@ const Layout: React.FC<LayoutProps> = ({ children, onNavigate, currentView }) =>
          setSearchQuery('');
          setSearchResults([]);
          setHasSearched(false);
+         setSearchStatus('');
        }
        return;
     }
@@ -163,17 +193,79 @@ const Layout: React.FC<LayoutProps> = ({ children, onNavigate, currentView }) =>
     setReportCopied(false);
   };
 
+  const executeAISearch = async (query: string, places: Place[]) => {
+    const resultIds = await searchPlacesWithAI(query, places);
+    const results = places.filter(p => resultIds.includes(p.id));
+    const sortedResults = results.sort((a, b) => resultIds.indexOf(a.id) - resultIds.indexOf(b.id));
+    setSearchResults(sortedResults);
+    setIsSearching(false);
+    setSearchStatus('');
+  };
+
   const handleSearch = async (query: string = searchQuery) => {
     if (!query.trim()) return;
     setSearchQuery(query);
     setIsSearching(true);
     setHasSearched(true);
+    setSearchStatus('');
+    
     const allPlaces = [...addedPlaces, ...MOCK_PLACES];
-    const resultIds = await searchPlacesWithAI(query, allPlaces);
-    const results = allPlaces.filter(p => resultIds.includes(p.id));
-    const sortedResults = results.sort((a, b) => resultIds.indexOf(a.id) - resultIds.indexOf(b.id));
-    setSearchResults(sortedResults);
-    setIsSearching(false);
+
+    // Check for "NEAR ME" intent
+    const isNearMe = /cerca|near|aquí|aqui/i.test(query);
+
+    if (isNearMe && navigator.geolocation) {
+       setSearchStatus('Obteniendo tu ubicación...');
+       navigator.geolocation.getCurrentPosition(
+         async (position) => {
+            const userLat = position.coords.latitude;
+            const userLng = position.coords.longitude;
+            
+            setSearchStatus('Calculando distancias...');
+
+            // 1. Calculate Distances
+            const placesWithDistance = allPlaces.map(place => {
+               if (!place.coordinates) return { ...place, distance: Infinity };
+               const dist = getDistanceFromLatLonInKm(userLat, userLng, place.coordinates.lat, place.coordinates.lng);
+               return { ...place, distance: dist };
+            });
+
+            // 2. Filter by Radius (50 km)
+            const nearbyPlaces = placesWithDistance.filter(p => p.distance !== Infinity && p.distance <= 50);
+
+            // 3. Extract Topic (remove "cerca de mi", etc)
+            const topic = query.toLowerCase().replace(/cerca|de|mi|near|me|aqui|aquí|\s+/g, ' ').trim();
+            
+            let finalResults = nearbyPlaces;
+
+            // 4. If there is a specific topic (e.g., "playas"), filter the nearby list
+            if (topic.length > 2) {
+               finalResults = nearbyPlaces.filter(p => 
+                  p.title.toLowerCase().includes(topic) || 
+                  p.tags.some(t => t.toLowerCase().includes(topic)) ||
+                  p.categoryId.toLowerCase().includes(topic) ||
+                  (p.shortDescription && p.shortDescription.toLowerCase().includes(topic))
+               );
+            }
+
+            // 5. Sort by Distance
+            finalResults.sort((a, b) => (a.distance || 0) - (b.distance || 0));
+            
+            setSearchResults(finalResults);
+            setIsSearching(false);
+            setSearchStatus(finalResults.length > 0 ? `Encontrados ${finalResults.length} lugares en 50km` : 'No hay lugares cercanos registrados.');
+         },
+         (error) => {
+            console.warn("Geolocation denied or error", error);
+            setSearchStatus('Ubicación no disponible. Buscando por texto...');
+            // Fallback to normal AI search
+            executeAISearch(query, allPlaces);
+         },
+         { timeout: 8000, enableHighAccuracy: false }
+       );
+    } else {
+       executeAISearch(query, allPlaces);
+    }
   };
 
   const handleLoginSubmit = (e: React.FormEvent) => {
@@ -260,6 +352,11 @@ const Layout: React.FC<LayoutProps> = ({ children, onNavigate, currentView }) =>
     if (outcome === 'accepted') {
       setDeferredPrompt(null);
     }
+  };
+
+  const handleBlogClick = (post: BlogPost) => {
+    closeModal();
+    if (onOpenPost) onOpenPost(post);
   };
 
   return (
@@ -417,7 +514,7 @@ const Layout: React.FC<LayoutProps> = ({ children, onNavigate, currentView }) =>
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-auto" onClick={closeModal} />
           
           <div className={`bg-white w-full max-w-2xl sm:rounded-2xl rounded-t-2xl p-6 pointer-events-auto relative transform transition-transform duration-300 animate-slide-up shadow-2xl
-            ${(activeModal === 'filter' || activeModal === 'faq') ? 'h-[85vh] sm:h-auto sm:max-h-[85vh] flex flex-col' : 'max-h-[85vh] overflow-y-auto overscroll-contain no-scrollbar'}`}
+            ${(activeModal === 'filter' || activeModal === 'faq') ? 'h-[85vh] sm:h-auto sm:max-h-[85vh] flex flex-col overflow-hidden' : 'max-h-[85vh] overflow-y-auto overscroll-contain no-scrollbar'}`}
           >
             <button onClick={closeModal} className="absolute top-4 right-4 text-stone-400 hover:text-stone-800 z-10 p-2 bg-white/50 rounded-full">
               <X className="w-6 h-6" />
@@ -472,19 +569,30 @@ const Layout: React.FC<LayoutProps> = ({ children, onNavigate, currentView }) =>
             {/* === FILTER MODAL === */}
             {activeModal === 'filter' && (
               <div className="flex flex-col h-full">
-                <h3 className="text-2xl font-bold serif mb-6 text-stone-900 flex items-center"><Sparkles className="w-5 h-5 text-orange-500 mr-2" /> Buscador Inteligente</h3>
-                <div className="relative mb-6">
-                  <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSearch()} placeholder="Ej: escapada romántica..." className="w-full bg-stone-50 border border-stone-200 rounded-xl py-4 pl-12 pr-12 text-stone-800 focus:ring-2 focus:ring-orange-500" />
+                <h3 className="text-2xl font-bold serif mb-2 text-stone-900 flex items-center"><Sparkles className="w-5 h-5 text-orange-500 mr-2" /> Buscador Inteligente</h3>
+                
+                <div className="relative mb-4">
+                  <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSearch()} placeholder="Ej: 'restaurantes cerca de mi', 'playas'..." className="w-full bg-stone-50 border border-stone-200 rounded-xl py-4 pl-12 pr-12 text-stone-800 focus:ring-2 focus:ring-orange-500" />
                   <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-stone-400 w-5 h-5" />
                   <button onClick={() => handleSearch()} className="absolute right-2 top-1/2 transform -translate-y-1/2 p-2 bg-orange-500 text-white rounded-lg">{isSearching ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowRight className="w-5 h-5" />}</button>
                 </div>
-                <div className="flex-grow overflow-y-auto no-scrollbar pr-1">
+                
+                {searchStatus && (
+                  <div className="mb-4 text-xs font-bold text-orange-600 bg-orange-50 px-3 py-2 rounded-lg flex items-center">
+                    {isSearching && <Loader2 className="w-3 h-3 animate-spin mr-2" />}
+                    {searchStatus}
+                  </div>
+                )}
+
+                <div className="flex-grow overflow-y-auto pr-1 min-h-0">
                   {!hasSearched && !isSearching && (
                     <div className="mb-8">
                       <p className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-3">Sugerencias</p>
                       <div className="flex flex-wrap gap-2">
                         {SUGGESTED_TAGS.map(tag => (
-                          <button key={tag} onClick={() => handleSearch(tag)} className="px-4 py-2 bg-stone-100 rounded-full text-stone-600 text-sm hover:bg-orange-50 hover:text-orange-600">#{tag}</button>
+                          <button key={tag} onClick={() => handleSearch(tag)} className="px-4 py-2 bg-stone-100 rounded-full text-stone-600 text-sm hover:bg-orange-50 hover:text-orange-600">
+                             {tag === 'Cerca de mí' ? <><MapPin className="w-3 h-3 inline mr-1" /> {tag}</> : `#${tag}`}
+                          </button>
                         ))}
                       </div>
                     </div>
@@ -537,11 +645,26 @@ const Layout: React.FC<LayoutProps> = ({ children, onNavigate, currentView }) =>
                 <p className="text-stone-500 text-sm mb-6">Tus lugares guardados para planificar tu ruta perfecta.</p>
                 
                 <div className="flex-grow overflow-y-auto no-scrollbar pr-1 pb-4">
-                  {favoritePlaces.length > 0 ? (
-                    <div className="grid grid-cols-1 gap-6">
-                      {favoritePlaces.map(place => (
-                        <PlaceCard key={place.id} place={place} />
-                      ))}
+                  {(favoritePlaces.length > 0 || favoritePosts.length > 0) ? (
+                    <div className="space-y-8">
+                      {favoritePlaces.length > 0 && (
+                        <div className="grid grid-cols-1 gap-6">
+                          {favoritePlaces.map(place => (
+                            <PlaceCard key={place.id} place={place} />
+                          ))}
+                        </div>
+                      )}
+                      
+                      {favoritePosts.length > 0 && (
+                        <div>
+                           {favoritePlaces.length > 0 && <h4 className="text-lg font-bold text-stone-800 mb-4 serif border-t border-stone-200 pt-6">Blog Guardado</h4>}
+                           <div className="grid grid-cols-1 gap-6">
+                              {favoritePosts.map(post => (
+                                <BlogCard key={post.id} post={post} onClick={() => handleBlogClick(post)} />
+                              ))}
+                           </div>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="text-center py-12 bg-stone-50 rounded-xl border border-stone-100">

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Category } from '../types';
-import { ArrowRight, Footprints, Mountain, Landmark, Umbrella, Calendar, Utensils, Loader2, Sparkles } from 'lucide-react';
+import { ArrowRight, Footprints, Mountain, Landmark, Umbrella, Calendar, Utensils, Loader2, Sparkles, Image as ImageIcon } from 'lucide-react';
 import AdminOverlay from './AdminOverlay';
 import { useAdmin } from './AdminContext';
 import { generateImageForLocation, getCachedImage, getCacheKey } from '../services/geminiService';
@@ -131,6 +131,7 @@ const CategoryCard: React.FC<CategoryCardProps> = ({ category, onClick }) => {
   };
 
   const isGenerated = imageSrc.startsWith('data:');
+  const isPlaceholder = !imageSrc.includes('solonet.es') && !isGenerated;
 
   return (
     <div 
@@ -169,6 +170,13 @@ const CategoryCard: React.FC<CategoryCardProps> = ({ category, onClick }) => {
         {isGenerated && !isGenerating && !getImageOverride(category.id) && (
            <div className="absolute top-4 right-4 z-30 bg-black/30 backdrop-blur px-2 py-1 rounded-full text-[10px] text-white/90 flex items-center border border-white/10">
               <Sparkles className="w-3 h-3 mr-1 text-orange-400" /> AI
+           </div>
+        )}
+
+        {/* SAMPLE IMAGE BADGE */}
+        {isPlaceholder && !isGenerating && (
+           <div className="absolute top-4 left-4 z-30 bg-black/50 backdrop-blur-md px-3 py-1.5 rounded-full text-white/90 text-[10px] font-bold uppercase tracking-widest flex items-center border border-white/10">
+              <ImageIcon className="w-3 h-3 mr-2 text-stone-300" /> Imagen de Referencia
            </div>
         )}
 

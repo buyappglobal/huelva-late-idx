@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { BlogPost } from '../types';
-import { Calendar, Clock, ArrowRight, User, Loader2, Sparkles } from 'lucide-react';
+import { Calendar, Clock, ArrowRight, User, Loader2, Sparkles, Image as ImageIcon, Heart } from 'lucide-react';
 import AdminOverlay from './AdminOverlay';
 import { useAdmin } from './AdminContext';
 import { generateImageForLocation, getCachedImage, getCacheKey } from '../services/geminiService';
@@ -15,6 +15,35 @@ const PLACEHOLDER_BLOG = "https://images.unsplash.com/photo-1486312338219-ce68d2
 
 const BlogCard: React.FC<BlogCardProps> = ({ post, onClick }) => {
   const { getImageOverride, setImageOverride, isAdminMode } = useAdmin();
+  const [isFavorite, setIsFavorite] = useState(false);
+
+  // Initialize Favorites
+  useEffect(() => {
+    try {
+      const favs = JSON.parse(localStorage.getItem('huelvalate_favorites') || '[]');
+      setIsFavorite(favs.includes(post.id));
+    } catch (e) {
+      console.warn("Error reading favorites", e);
+    }
+  }, [post.id]);
+
+  const toggleFavorite = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const favs = JSON.parse(localStorage.getItem('huelvalate_favorites') || '[]');
+      let newFavs;
+      if (favs.includes(post.id)) {
+        newFavs = favs.filter((id: string) => id !== post.id);
+        setIsFavorite(false);
+      } else {
+        newFavs = [...favs, post.id];
+        setIsFavorite(true);
+      }
+      localStorage.setItem('huelvalate_favorites', JSON.stringify(newFavs));
+    } catch (e) {
+      console.error("Error saving favorite", e);
+    }
+  };
 
   // --- IMAGE LOGIC (STATIC FIRST -> CACHE -> AI FALLBACK) ---
 
@@ -121,6 +150,7 @@ const BlogCard: React.FC<BlogCardProps> = ({ post, onClick }) => {
   };
 
   const isGenerated = imageSrc.startsWith('data:');
+  const isPlaceholder = !imageSrc.includes('solonet.es') && !isGenerated;
 
   return (
     <article 
@@ -162,6 +192,13 @@ const BlogCard: React.FC<BlogCardProps> = ({ post, onClick }) => {
               style={{ viewTransitionName: `blog-img-${post.id}` } as React.CSSProperties}
             />
             
+            {/* SAMPLE IMAGE BADGE */}
+            {isPlaceholder && (
+               <div className="absolute bottom-0 left-0 w-full bg-stone-900/60 backdrop-blur-[2px] text-white/90 text-[10px] font-bold uppercase tracking-widest py-1.5 flex items-center justify-center z-20">
+                  <ImageIcon className="w-3 h-3 mr-2 text-stone-300" /> Imagen de Referencia
+               </div>
+            )}
+
             {/* AI Badge */}
             {isGenerated && !getImageOverride(post.id) && (
                <div className="absolute top-3 right-3 bg-black/40 backdrop-blur-md border border-white/10 px-2 py-1 rounded-full text-[10px] font-medium text-white shadow-sm flex items-center animate-fade-in" title="Generado por IA">
@@ -174,6 +211,13 @@ const BlogCard: React.FC<BlogCardProps> = ({ post, onClick }) => {
         <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-bold text-stone-800 shadow-sm flex items-center z-20 pointer-events-none">
            <span className="text-orange-600 mr-1">#</span> {post.tags[0]}
         </div>
+
+        <button 
+           onClick={toggleFavorite}
+           className="absolute top-3 right-3 p-2 rounded-full bg-white/20 backdrop-blur-md hover:bg-white transition-colors z-20 shadow-sm group/fav"
+        >
+           <Heart className={`w-5 h-5 transition-colors ${isFavorite ? 'text-red-500 fill-red-500' : 'text-white group-hover/fav:text-red-500'}`} />
+        </button>
       </div>
 
       <div className="p-5 flex-grow flex flex-col">

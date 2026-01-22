@@ -4,10 +4,12 @@ import Layout from './components/Layout';
 import PlaceCard from './components/PlaceCard';
 import CategoryCard from './components/CategoryCard';
 import BlogCard from './components/BlogCard';
+import HomeMap from './components/HomeMap';
+import PlaceDetailModal from './components/PlaceDetailModal';
 import { CATEGORIES, MOCK_PLACES, BLOG_POSTS } from './constants';
 import { Place, BlogPost } from './types';
 import { AdminProvider, useAdmin } from './components/AdminContext';
-import './services/firebase'; // Inicializar Firebase
+import './services/firebase'; 
 import { 
   Footprints, 
   Mountain, 
@@ -37,15 +39,11 @@ const getIcon = (iconName: string, className: string) => {
   }
 };
 
-// --- DATE PARSING HELPER ---
 const parsePlaceDate = (dateStr?: string): number => {
-  if (!dateStr) return 9999999999999; // Si no tiene fecha, va al final
-
+  if (!dateStr) return 9999999999999;
   const str = dateStr.toLowerCase().trim();
   const now = new Date();
   const currentYear = now.getFullYear();
-
-  // Diccionario de meses en español (y variantes)
   const months: {[key: string]: number} = {
     'ene': 0, 'jan': 0, 'enero': 0,
     'feb': 1, 'febrero': 1,
@@ -60,115 +58,179 @@ const parsePlaceDate = (dateStr?: string): number => {
     'nov': 10, 'noviembre': 10,
     'dic': 11, 'dec': 11, 'diciembre': 11
   };
-
-  // 1. Intenta formato específico "Día Mes Año" (ej: "7 Feb 2026", "6 - 8 Feb 2026")
-  // Regex busca: digitos (día), seguido de texto (mes), seguido de digitos (año)
   const dmyRegex = /(\d{1,2}).*?([a-zñ]{3,}).*?(\d{4})/i;
   const dmyMatch = str.match(dmyRegex);
-
   if (dmyMatch) {
     const day = parseInt(dmyMatch[1]);
-    const monthKey = dmyMatch[2].substring(0, 3).toLowerCase(); // Primeras 3 letras para coincidir con keys
+    const monthKey = dmyMatch[2].substring(0, 3).toLowerCase();
     const year = parseInt(dmyMatch[3]);
-    
-    // Buscar índice del mes
     const month = months[monthKey] ?? 0;
     return new Date(year, month, day).getTime();
   }
-
-  // 2. Intenta solo "Mes" o rango de meses (ej: "Abril", "Julio - Agosto")
-  // Asumimos año actual o siguiente si el mes ya pasó (lógica simple: año actual)
   for (const [mKey, mVal] of Object.entries(months)) {
     if (str.includes(mKey)) {
-       // Asignar día 1 del mes encontrado
        return new Date(currentYear, mVal, 1).getTime();
     }
   }
-
-  // 3. Palabras clave especiales (Fiestas móviles aproximadas)
-  if (str.includes('pentecostés') || str.includes('rocío')) {
-    return new Date(currentYear, 5, 1).getTime(); // Junio aprox
-  }
-  if (str.includes('semana santa')) {
-    return new Date(currentYear, 3, 1).getTime(); // Abril aprox
-  }
-
+  if (str.includes('pentecostés') || str.includes('rocío')) return new Date(currentYear, 5, 1).getTime();
+  if (str.includes('semana santa')) return new Date(currentYear, 3, 1).getTime();
   return 9999999999999;
 };
 
-// Component that needs access to Admin Context for the header image override and new places
 const AppContent: React.FC = () => {
   const [currentView, setCurrentView] = useState<string>('home');
   const [filteredPlaces, setFilteredPlaces] = useState<Place[]>([]);
   const [visiblePlaces, setVisiblePlaces] = useState<Place[]>([]);
   const [selectedPost, setSelectedPost] = useState<BlogPost | null>(null);
+  
+  // For Deep Linking to Places
+  const [deepLinkPlace, setDeepLinkPlace] = useState<Place | null>(null);
+
   const [page, setPage] = useState(1);
   const ITEMS_PER_PAGE = 6;
   
   const { getImageOverride, addedPlaces } = useAdmin();
 
-  // Helper for View Transitions
-  const handleNavigate = (view: string) => {
-    if (view === currentView) return;
+  // --- ROUTING ENGINE ---
+  useEffect(() => {
+    const handlePopState = () => {
+      processUrl();
+    };
 
-    // Check if browser supports View Transitions
+    const processUrl = () => {
+      const params = new URLSearchParams(window.location.search);
+      const view = params.get('view') || 'home';
+      const postId = params.get('id');
+      const placeId = params.get('placeId');
+
+      // 1. Handle Place Modal Deep Link
+      if (placeId) {
+        const allPlaces = [...addedPlaces, ...MOCK_PLACES];
+        const place = allPlaces.find(p => p.id === placeId);
+        if (place) {
+          setDeepLinkPlace(place);
+        }
+      } else {
+        setDeepLinkPlace(null);
+      }
+
+      // 2. Handle Views
+      setCurrentView(view);
+
+      // 3. Handle Blog Post Deep Link
+      if (view === 'post_detail' && postId) {
+        const post = BLOG_POSTS.find(p => p.slug === postId || p.id === postId);
+        if (post) {
+          setSelectedPost(post);
+        } else {
+          setCurrentView('blog'); // Fallback if post not found
+        }
+      } else if (view !== 'post_detail') {
+        setSelectedPost(null);
+      }
+    };
+
+    // Initial load
+    processUrl();
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [addedPlaces]); // Dependency on addedPlaces ensuring admin places are loaded before checking
+
+  const updateUrl = (view: string, id?: string) => {
+    const params = new URLSearchParams();
+    if (view !== 'home') params.set('view', view);
+    if (id) params.set('id', id);
+    
+    const newUrl = `${window.location.pathname}${params.toString() ? '?' + params.toString() : ''}`;
+    window.history.pushState({}, '', newUrl);
+  };
+
+  const handleNavigate = (view: string) => {
+    if (view === currentView && !deepLinkPlace) return;
+
+    // Close deep linked modal if navigating away
+    if (deepLinkPlace) {
+       setDeepLinkPlace(null);
+       const params = new URLSearchParams(window.location.search);
+       params.delete('placeId');
+       const newUrl = `${window.location.pathname}${params.toString() ? '?' + params.toString() : ''}`;
+       window.history.pushState({}, '', newUrl);
+    }
+
     if ('startViewTransition' in document) {
       (document as any).startViewTransition(() => {
-        // Use flushSync to ensure the DOM updates happen synchronously within the transition callback
         flushSync(() => {
           setCurrentView(view);
+          updateUrl(view);
         });
       });
     } else {
       setCurrentView(view);
+      updateUrl(view);
     }
   };
 
   const handleOpenPost = (post: BlogPost) => {
-    if ('startViewTransition' in document) {
-      (document as any).startViewTransition(() => {
-        flushSync(() => {
-           setSelectedPost(post);
-           setCurrentView('post_detail');
-        });
-      });
-    } else {
+    const update = () => {
        setSelectedPost(post);
        setCurrentView('post_detail');
+       updateUrl('post_detail', post.slug);
+    };
+
+    if ('startViewTransition' in document) {
+      (document as any).startViewTransition(() => {
+        flushSync(update);
+      });
+    } else {
+       update();
     }
   };
 
-  // Simulate routing/filtering logic
+  const handleCloseDeepLink = () => {
+    setDeepLinkPlace(null);
+    // Remove param from URL without refreshing
+    const params = new URLSearchParams(window.location.search);
+    params.delete('placeId');
+    const newUrl = `${window.location.pathname}${params.toString() ? '?' + params.toString() : ''}`;
+    window.history.pushState({}, '', newUrl);
+  };
+
+  // Logic to handle specific share for Blog Post
+  const handleSharePost = async () => {
+    if (!selectedPost) return;
+    const url = `${window.location.origin}/?view=post_detail&id=${selectedPost.slug}`;
+    const shareData = {
+      title: selectedPost.title,
+      text: selectedPost.excerpt,
+      url: url
+    };
+    if (navigator.share) {
+      try { await navigator.share(shareData); } catch (e) {}
+    } else {
+      navigator.clipboard.writeText(url);
+      alert("Enlace al artículo copiado.");
+    }
+  };
+
+  // Filter Logic
   useEffect(() => {
     window.scrollTo(0, 0);
     setPage(1);
-
-    // Combine static places with admin-added places
     const allPlaces = [...addedPlaces, ...MOCK_PLACES];
 
-    if (currentView === 'home') {
+    if (currentView === 'home' || currentView === 'blog' || currentView === 'post_detail') {
       setFilteredPlaces([]);
       setVisiblePlaces([]);
-      setSelectedPost(null);
-    } else if (currentView === 'blog') {
-       // Blog view logic if needed specifically
-       setSelectedPost(null);
-    } else if (currentView === 'post_detail') {
-       // logic handled by state
     } else {
       const filtered = allPlaces.filter(p => p.categoryId === currentView);
-      
-      // ORDENAR POR FECHA (Cerca -> Lejos)
-      // Si tienen fecha, los ordenamos. Si no, mantenemos orden o van al final.
       const sorted = filtered.sort((a, b) => {
         const timeA = parsePlaceDate(a.date);
         const timeB = parsePlaceDate(b.date);
         return timeA - timeB;
       });
-
       setFilteredPlaces(sorted);
       setVisiblePlaces(sorted.slice(0, ITEMS_PER_PAGE));
-      setSelectedPost(null);
     }
   }, [currentView, addedPlaces]); 
 
@@ -180,19 +242,24 @@ const AppContent: React.FC = () => {
   };
 
   const activeCategory = CATEGORIES.find(c => c.id === currentView);
-  
-  // Apply override to header if active
   const activeHeaderImage = activeCategory 
     ? (getImageOverride(activeCategory.id) || activeCategory.coverImage)
     : '';
 
   return (
-    <Layout currentView={currentView} onNavigate={handleNavigate}>
+    <Layout currentView={currentView} onNavigate={handleNavigate} onOpenPost={handleOpenPost}>
       
+      {/* DEEP LINK MODAL RENDER */}
+      {deepLinkPlace && (
+        <PlaceDetailModal 
+          place={deepLinkPlace} 
+          onClose={handleCloseDeepLink}
+        />
+      )}
+
       {/* --- HOME VIEW --- */}
       {currentView === 'home' && (
         <div className="animate-fade-in">
-          {/* Categories Grid - now the top section */}
           <div id="categories" className="pt-32 pb-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto bg-stone-50">
             <div className="text-center mb-12">
               <h1 className="text-4xl md:text-5xl font-bold text-stone-900 mb-6 serif">
@@ -204,7 +271,7 @@ const AppContent: React.FC = () => {
               <div className="w-24 h-1 bg-orange-500 mx-auto rounded-full" />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-16">
               {CATEGORIES.map((cat) => (
                 <CategoryCard 
                   key={cat.id} 
@@ -213,9 +280,22 @@ const AppContent: React.FC = () => {
                 />
               ))}
             </div>
+
+            <div className="mb-16">
+               <div className="flex items-end justify-between mb-8">
+                 <div>
+                   <span className="text-orange-600 font-bold tracking-widest uppercase text-xs mb-2 block">Mapa Interactivo</span>
+                   <h2 className="text-3xl font-bold text-stone-900 serif">Explora la Provincia</h2>
+                 </div>
+               </div>
+               
+               <HomeMap 
+                 places={[...MOCK_PLACES, ...addedPlaces]} 
+                 onPlaceClick={(place) => handleNavigate(place.categoryId)} 
+               />
+            </div>
           </div>
 
-          {/* BLOG MODULE SECTION */}
           <section className="bg-white py-16 border-t border-stone-100">
              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between items-end mb-10">
@@ -232,7 +312,6 @@ const AppContent: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                   {/* Show only first 3 posts on Home */}
                    {BLOG_POSTS.slice(0, 3).map(post => (
                       <BlogCard key={post.id} post={post} onClick={() => handleOpenPost(post)} />
                    ))}
@@ -249,7 +328,6 @@ const AppContent: React.FC = () => {
              </div>
           </section>
           
-          {/* Call to Action Area */}
           <div className="bg-stone-900 text-white py-20 px-4 text-center">
              <h2 className="text-3xl font-bold serif mb-6">¿No sabes por dónde empezar?</h2>
              <p className="text-stone-400 max-w-xl mx-auto mb-8">
@@ -283,7 +361,6 @@ const AppContent: React.FC = () => {
       {/* --- POST DETAIL VIEW --- */}
       {currentView === 'post_detail' && selectedPost && (
          <article className="animate-fade-in min-h-screen bg-white pb-20">
-            {/* Hero Image */}
             <div className="relative h-[50vh] w-full">
                <img 
                  src={selectedPost.imageUrl} 
@@ -325,18 +402,16 @@ const AppContent: React.FC = () => {
                         <span className="flex items-center"><Calendar className="w-4 h-4 mr-2" /> {selectedPost.date}</span>
                         <span className="flex items-center"><Clock className="w-4 h-4 mr-2" /> {selectedPost.readTime} de lectura</span>
                      </div>
-                     <button className="text-stone-400 hover:text-stone-800 transition-colors">
+                     <button onClick={handleSharePost} className="text-stone-400 hover:text-stone-800 transition-colors">
                         <Share2 className="w-5 h-5" />
                      </button>
                   </div>
 
-                  {/* Content injection - safe since it comes from our constants */}
                   <div 
                      className="prose prose-stone prose-lg max-w-none first-letter:text-5xl first-letter:font-serif first-letter:text-orange-500 first-letter:mr-3 first-letter:float-left"
                      dangerouslySetInnerHTML={{ __html: selectedPost.content }}
                   />
 
-                  {/* Share / Tags Footer */}
                   <div className="mt-12 pt-8 border-t border-stone-100">
                      <h3 className="font-bold text-lg mb-4 serif">¿Te ha gustado este artículo?</h3>
                      <p className="text-stone-500 mb-6">Descubre más experiencias relacionadas en nuestras categorías principales.</p>
@@ -354,7 +429,6 @@ const AppContent: React.FC = () => {
       {/* --- CATEGORY / LIST VIEW --- */}
       {currentView !== 'home' && currentView !== 'blog' && currentView !== 'post_detail' && activeCategory && (
         <div className="animate-fade-in min-h-screen bg-stone-50">
-          {/* Category Header */}
           <div className="relative h-[40vh] w-full overflow-hidden">
             <img 
               src={activeHeaderImage} 
@@ -378,13 +452,11 @@ const AppContent: React.FC = () => {
             </div>
           </div>
 
-          {/* List Content */}
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
              <div className="flex justify-between items-center mb-10 border-b border-stone-200 pb-4">
                 <span className="text-stone-500 font-medium">
                   Mostrando {visiblePlaces.length} de {filteredPlaces.length} lugares
                 </span>
-                {/* Could add filters here later */}
              </div>
 
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
@@ -393,7 +465,6 @@ const AppContent: React.FC = () => {
                ))}
              </div>
 
-             {/* Infinite Scroll / Load More Mock */}
              {visiblePlaces.length < filteredPlaces.length && (
                <div className="mt-16 text-center">
                  <button 
