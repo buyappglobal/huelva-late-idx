@@ -1,0 +1,7 @@
+# apphosting.yaml
+# Este archivo le dice a Firebase qué variables cargar en Cloud Run
+env:
+  - variable: MI_API_KEY_DE_MAPAS
+    value: "tu_valor_aqui" # O puedes usar secretos de Google Cloud
+  - variable: DATABASE_URL
+    value: "tu_url_de_base_de_datos"
